@@ -10,17 +10,35 @@
 
 ## Quick start
 
-**Requirements:** Go **1.22+**, Node **20+** (only if you build the UI from source), and permission to bind / join multicast (often root, `sudo`, or the right Linux capabilities on `UDP 5353`).
+### Easiest path: `start.sh` / `stop.sh` / `restart.sh` (Docker)
 
-Clone the repository, then:
+If you have **Docker** with the **Compose v2** plugin (`docker compose`), the repo root scripts are the quickest way to run the stack defined in [`docker-compose.yml`](./docker-compose.yml) (host networking, UI on **port 8765**).
+
+| Script | What it does |
+| --- | --- |
+| **`start.sh`** | `docker compose down` (cleans orphans), removes any stray container named `mdns-topoviz`, then **`docker compose up -d --build`**. Builds the image when needed and starts the service in the background. |
+| **`stop.sh`** | **`docker compose down`** — stops and removes the compose stack. |
+| **`restart.sh`** | Stops the stack, then **`docker compose up -d --build --force-recreate`** — useful after changing `docker-compose.yml`, the Dockerfile, or app code you want picked up in a fresh container. |
+
+From a clone of the repository:
+
+```bash
+cd mDNS_Topoviz
+chmod +x start.sh stop.sh restart.sh   # only if your checkout is not executable
+./start.sh
+```
+
+Open **http://127.0.0.1:8765** on the host (or the machine’s LAN IP if you browse from another device). Multicast for mDNS uses **host network mode** in compose, which is what you usually want for discovery.
+
+### Without Docker: build and run the binary
+
+**Requirements:** Go **1.22+**, Node **20+** (only if you build the UI from source), and permission to bind / join multicast (often root, `sudo`, or the right Linux capabilities on `UDP 5353`).
 
 ```bash
 cd mDNS_Topoviz
 make build    # builds web/ and compiles the Go binary
 ./bin/mdns-topoviz -http :8765
 ```
-
-Open **http://127.0.0.1:8765** in a browser on the same host (or use your host IP if you bind to `0.0.0.0`).
 
 For contributors and automation, see **[AGENTS.md](./AGENTS.md)** for repository layout, APIs, and conventions.
 
@@ -57,14 +75,14 @@ Commented templates: [.env.example](./.env.example).
 
 ## Docker
 
-`--network host` (or an equivalent) is usually required so multicast behaves like on the host network namespace.
+`--network host` (or an equivalent) is usually required so multicast behaves like on the host network namespace. The compose file already uses **`network_mode: host`** for the `topoviz` service.
+
+For day-to-day use, prefer **`./start.sh`**, **`./stop.sh`**, and **`./restart.sh`** (see [Quick start](#quick-start)). One-off run without compose:
 
 ```bash
 docker build -t mdns-topoviz:local .
 docker run --rm --network host mdns-topoviz:local -http :8765
 ```
-
-See `docker-compose.yml` if you keep a compose stack in your fork.
 
 ## Building from source (details)
 
