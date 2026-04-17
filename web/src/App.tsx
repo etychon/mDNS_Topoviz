@@ -128,6 +128,19 @@ const PILL_MODEL_H = 14;
 const PILL_STACK_GAP = 8;
 const HOST_PILL_CLEAR = 10;
 
+/** Service-type filter list: show this many types, ranked by live instance count. */
+const TOP_SERVICE_TYPE_ROWS = 20;
+
+/** Max discovery events kept in memory (WS ring); 2‑min HUD count cannot exceed this. */
+const EVENT_RING_CAP = 500;
+
+/** Live HUD histogram: 2‑minute window, fixed-width wall‑time buckets (counts survive event-ring eviction). */
+const HUD_HIST_WINDOW_MS = 120_000;
+const HUD_HIST_BUCKETS = 72;
+const HUD_HIST_BUCKET_MS = HUD_HIST_WINDOW_MS / HUD_HIST_BUCKETS;
+/** Extra buckets to retain past the left edge before pruning the aggregate map. */
+const HUD_HIST_PRUNE_MARGIN = 32;
+
 type BBox = { x1: number; y1: number; x2: number; y2: number };
 
 function toBBox(bb: { x1: number; y1: number; x2: number; y2: number }): BBox {
@@ -603,6 +616,9 @@ export function App() {
   const hasInitialLayoutRef = useRef(false);
   const structureSigRef = useRef("");
   const snapRef = useRef<GraphSnapshot | null>(null);
+  /** bucketKey = floor(eventTime / HUD_HIST_BUCKET_MS) → count (never decremented when UI ring evicts events). */
+  const hudBucketCountsRef = useRef<Map<number, number>>(new Map());
+  const [hudHistVersion, setHudHistVersion] = useState(0);
 
   const ifaceChoices = useMemo(() => {
     const s = new Set<string>();
@@ -613,13 +629,21 @@ export function App() {
     return s;
   }, [snap]);
 
-  const typeChoices = useMemo(() => {
-    const s = new Set<string>();
-    if (!snap) return [];
+  const serviceTypeFilterRows = useMemo(() => {
+    if (!snap) return { rows: [] as { type: string; count: number; friendly: string }[], totalDistinct: 0 };
+    const counts = new Map<string, number>();
     for (const n of snap.nodes) {
-      if (n.kind === "service" && n.meta?.type) s.add(n.meta.type.toLowerCase());
+      if (n.kind === "service" && n.meta?.type) {
+        const k = n.meta.type.toLowerCase();
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
     }
-    return Array.from(s).sort();
+    const totalDistinct = counts.size;
+    const rows = Array.from(counts.entries())
+      .map(([type, count]) => ({ type, count, friendly: friendlyServiceTypeName(type) }))
+      .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type))
+      .slice(0, TOP_SERVICE_TYPE_ROWS);
+    return { rows, totalDistinct };
   }, [snap]);
 
   useEffect(() => {
@@ -872,8 +896,20 @@ export function App() {
         ev = JSON.parse(String(m.data)) as DiscoveryEvent;
         setEvents((prev) => {
           const next = [ev!, ...prev];
-          return next.slice(0, 500);
+          return next.slice(0, EVENT_RING_CAP);
         });
+        const t = Date.parse(ev!.time);
+        if (Number.isFinite(t)) {
+          const k = Math.floor(t / HUD_HIST_BUCKET_MS);
+          const m = hudBucketCountsRef.current;
+          m.set(k, (m.get(k) ?? 0) + 1);
+          const endK = Math.floor(Date.now() / HUD_HIST_BUCKET_MS);
+          const pruneBefore = endK - HUD_HIST_BUCKETS - HUD_HIST_PRUNE_MARGIN;
+          for (const key of m.keys()) {
+            if (key < pruneBefore) m.delete(key);
+          }
+          setHudHistVersion((v) => v + 1);
+        }
       } catch {
         // ignore malformed frames
       }
@@ -998,26 +1034,30 @@ export function App() {
   }, []);
 
   const packetTimeline = useMemo(() => {
-    const buckets = 72;
-    const windowMs = 120_000;
     const now = clock;
-    const start = now - windowMs;
-    const counts = new Array<number>(buckets).fill(0);
+    const endK = Math.floor(now / HUD_HIST_BUCKET_MS);
+    const startK = endK - (HUD_HIST_BUCKETS - 1);
+    const windowStart = now - HUD_HIST_WINDOW_MS;
+    const m = hudBucketCountsRef.current;
+    const counts = new Array<number>(HUD_HIST_BUCKETS);
     let total = 0;
-    for (const ev of events) {
-      const t = Date.parse(ev.time);
-      if (!Number.isFinite(t) || t < start) continue;
-      if (t > now + 10_000) continue;
-      total++;
-      const slot = Math.min(
-        buckets - 1,
-        Math.max(0, Math.floor(((t - start) / windowMs) * buckets)),
-      );
-      counts[slot]++;
+    for (let i = 0; i < HUD_HIST_BUCKETS; i++) {
+      const key = startK + i;
+      const c = m.get(key) ?? 0;
+      counts[i] = c;
+      total += c;
     }
     const max = Math.max(1, ...counts);
-    return { counts, max, total };
-  }, [events, clock]);
+    let eventsWindowTotal = 0;
+    for (const ev of events) {
+      const t = Date.parse(ev.time);
+      if (!Number.isFinite(t) || t < windowStart || t > now + 10_000) continue;
+      eventsWindowTotal++;
+    }
+    const countCapped =
+      events.length >= EVENT_RING_CAP && eventsWindowTotal >= EVENT_RING_CAP;
+    return { counts, max, total, countCapped, histStartK: startK };
+  }, [clock, hudHistVersion, events]);
 
   const clockLabel = useMemo(
     () =>
@@ -1351,17 +1391,32 @@ export function App() {
           </div>
         </div>
         <aside className="app-aside">
-          <h2 className="aside-title">Service types</h2>
-          <div className="type-chip-list">
-            {typeChoices.map((t) => (
-              <label key={t} className={`type-chip${types.has(t.toLowerCase()) ? " type-chip--on" : ""}`}>
-                <input type="checkbox" checked={types.has(t.toLowerCase())} onChange={() => toggleType(t)} />
-                <span>{t}</span>
-              </label>
-            ))}
+          <div className="aside-type-section">
+            <h2 className="aside-title">Service types</h2>
+            {serviceTypeFilterRows.totalDistinct > TOP_SERVICE_TYPE_ROWS ? (
+              <p className="aside-type-hint">
+                Top {TOP_SERVICE_TYPE_ROWS} of {serviceTypeFilterRows.totalDistinct} types by instance count
+              </p>
+            ) : (
+              <p className="aside-type-hint">By instance count · tick to filter graph</p>
+            )}
+            <div className="type-chip-list">
+              {serviceTypeFilterRows.rows.map((row) => (
+                <label
+                  key={row.type}
+                  className={`type-chip${types.has(row.type) ? " type-chip--on" : ""}`}
+                  title={row.type}
+                >
+                  <input type="checkbox" checked={types.has(row.type)} onChange={() => toggleType(row.type)} />
+                  <span className="type-chip-pill type-chip-pill--count">{row.count}</span>
+                  <span className="type-chip-pill type-chip-pill--name">{row.friendly}</span>
+                  <span className="type-chip-raw">{row.type}</span>
+                </label>
+              ))}
+            </div>
           </div>
-          <h2 className="aside-title">Selection</h2>
-          <div className="selection-panel">
+          <h2 className="aside-title aside-title--section-gap">Selection</h2>
+          <div className="selection-panel selection-panel--scroll">
             {!selected ? <p className="selection-empty">Tap a node for details.</p> : null}
             {selected ? (
               <>
@@ -1477,34 +1532,49 @@ export function App() {
           </div>
         </aside>
       ) : null}
-      <div className="live-hud-bar" aria-label="Live packet activity">
-        <div className="live-hud-histo" title="Packet counts by time slot (last 2 minutes, newest at right)">
-          {packetTimeline.counts.map((c, i) => (
+      <div className="app-bottom-dock">
+        <div className="live-hud-bar" aria-label="Live packet activity">
+          <div
+            className="live-hud-histo"
+            title="Discovery events per fixed wall-time bucket (~1.67s each), last 72 buckets (~2 min); newest on the right. Past buckets keep their counts even when the event list ring drops old rows."
+          >
+            {packetTimeline.counts.map((c, i) => (
+              <span
+                key={packetTimeline.histStartK + i}
+                className="live-hud-bar-col"
+                style={{ height: `${Math.max(5, Math.round((c / packetTimeline.max) * 100))}%` }}
+              />
+            ))}
+          </div>
+          <div className="live-hud-side">
             <span
-              key={i}
-              className="live-hud-bar-col"
-              style={{ height: `${Math.max(5, Math.round((c / packetTimeline.max) * 100))}%` }}
-            />
-          ))}
+              className="live-hud-count"
+              title={
+                packetTimeline.countCapped
+                  ? `At least ${packetTimeline.total} discovery events in the last 2 minutes — the UI keeps only the ${EVENT_RING_CAP} newest events, so the true count can be higher.`
+                  : `Discovery events received in the last 2 minutes (buffer holds up to ${EVENT_RING_CAP}).`
+              }
+            >
+              {packetTimeline.countCapped
+                ? `${packetTimeline.total.toLocaleString()}+`
+                : packetTimeline.total.toLocaleString()}{" "}
+              <span className="live-hud-count-label">events</span>
+              <span className="live-hud-window"> · 2 min window</span>
+            </span>
+            <time className="live-hud-time" dateTime={new Date(clock).toISOString()}>
+              {clockLabel}
+            </time>
+            <span className={status === "live" ? "live-pill live-pill--on" : "live-pill"}>
+              <span className="live-pill-dot" aria-hidden />
+              LIVE
+            </span>
+          </div>
         </div>
-        <div className="live-hud-side">
-          <span className="live-hud-count">
-            {packetTimeline.total.toLocaleString()} <span className="live-hud-count-label">packets</span>
-            <span className="live-hud-window"> · 2 min window</span>
-          </span>
-          <time className="live-hud-time" dateTime={new Date(clock).toISOString()}>
-            {clockLabel}
-          </time>
-          <span className={status === "live" ? "live-pill live-pill--on" : "live-pill"}>
-            <span className="live-pill-dot" aria-hidden />
-            LIVE
-          </span>
-        </div>
+        <footer>
+          Passive observer on UDP 5353 · DNS-SD queries only ·{" "}
+          {snap ? `server time ${snap.serverTime}` : "loading graph…"}
+        </footer>
       </div>
-      <footer>
-        Passive observer on UDP 5353 · DNS-SD queries only ·{" "}
-        {snap ? `server time ${snap.serverTime}` : "loading graph…"}
-      </footer>
     </div>
   );
 }

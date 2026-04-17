@@ -52,6 +52,28 @@ For contributors and automation, see **[AGENTS.md](./AGENTS.md)** for repository
 
 Longer-term ideas (packet capture export, durable storage, extra protocols) are **not** part of the default scope; the codebase is structured so they can be added in follow-ups without breaking the read-only posture.
 
+## Screenshots
+
+Drop image files under [`docs/screenshots/`](./docs/screenshots/) (PNG or WebP work well on GitHub). Replace the paths below with your own filenames, or edit the captions to match what you captured.
+
+### Live topology
+
+The main graph: hosts, service instances, and service-type nodes as they appear on your LAN.
+
+![Live mDNS topology graph](docs/screenshots/live-topology.png)
+
+### Selection & sidebar
+
+Choosing a host or service instance and inspecting details, TTL, and TXT in the right-hand panel.
+
+![Selection detail and sidebar](docs/screenshots/selection-sidebar.png)
+
+### Events (optional)
+
+The floating discovery event feed and filters, if you want to highlight live traffic.
+
+![Discovery events panel](docs/screenshots/events-panel.png)
+
 ## Configuration
 
 Flags are documented in `--help`. Environment variables override flags for easy containers:

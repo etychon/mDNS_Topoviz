@@ -1,5 +1,10 @@
 :root {
   color-scheme: dark;
+  /* Live HUD strip height */
+  --live-hud-height: clamp(52px, 20vh, 168px);
+  /* Reserve space in .app so graph/sidebar are not covered by the fixed bottom dock (HUD + footer). */
+  --footer-strip-height: 3.25rem;
+  --app-bottom-dock-pad: calc(var(--live-hud-height) + var(--footer-strip-height));
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.45;
   --bg-deep: #070b14;
@@ -61,6 +66,21 @@ body {
   flex-direction: column;
   flex: 1;
   min-height: 100vh;
+  box-sizing: border-box;
+  /* Clears the fixed .app-bottom-dock (packet HUD + footer). */
+  padding-bottom: var(--app-bottom-dock-pad);
+}
+
+.app-bottom-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-deep);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45);
 }
 
 .app-header {
@@ -199,12 +219,17 @@ main.main-row {
 }
 
 .cy-legend {
-  position: absolute;
-  left: 10px;
-  top: 10px;
+  /*
+   * Fixed (not absolute in .cy-wrap): the events panel is position:fixed; z-index:30 and comes
+   * after <main> in the DOM, so it painted above the whole graph column and hid this legend.
+   * Pin the legend to the viewport with a higher z-index so it stays above the events float.
+   */
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  top: calc(3.35rem + env(safe-area-inset-top, 0px));
   bottom: auto;
-  z-index: 4;
-  max-width: min(248px, 92%);
+  z-index: 35;
+  max-width: min(248px, calc(100vw - 24px));
   padding: 10px 11px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -284,7 +309,10 @@ main.main-row {
   width: 380px;
   max-width: 42vw;
   flex-shrink: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   padding: 0.85rem 1rem 1.1rem;
   background: linear-gradient(180deg, #0f172a 0%, #0b1220 100%);
   border-left: 1px solid transparent;
@@ -313,22 +341,45 @@ main.main-row {
   color: #64748b;
 }
 
-.app-aside h2.aside-title:not(:first-child) {
+.aside-title--section-gap {
   margin-top: 1rem;
+}
+
+/* Cap service-type filter block (~⅓ of sidebar) and scroll the list inside */
+.aside-type-section {
+  flex: 0 1 33%;
+  max-height: 33%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.aside-type-hint {
+  margin: 0 0 0.4rem;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  color: #64748b;
 }
 
 .type-chip-list {
   display: flex;
   flex-direction: column;
   gap: 0.38rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
 }
 
 .type-chip {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.38rem 0.55rem;
-  border-radius: 999px;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.45rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: rgba(30, 41, 59, 0.35);
   font-size: 0.76rem;
@@ -353,10 +404,44 @@ main.main-row {
 
 .type-chip input {
   accent-color: #f472b6;
+  flex-shrink: 0;
 }
 
-.type-chip span {
+.type-chip-pill {
+  flex-shrink: 0;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0.1rem 0.42rem;
+  border-radius: 999px;
+  line-height: 1.2;
+  border: 1px solid transparent;
+}
+
+.type-chip-pill--count {
+  font-variant-numeric: tabular-nums;
+  color: #7dd3fc;
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.type-chip-pill--name {
+  max-width: min(200px, 55%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e9d5ff;
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(167, 139, 250, 0.35);
+}
+
+.type-chip-raw {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: 0.62rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #94a3b8;
   word-break: break-all;
+  line-height: 1.25;
 }
 
 pre {
@@ -373,7 +458,8 @@ pre {
   z-index: 30;
   left: 14px;
   right: auto;
-  bottom: 86px;
+  /* Sit above the fixed bottom dock (HUD + footer) */
+  bottom: calc(var(--app-bottom-dock-pad) + 10px);
   width: min(440px, calc(100vw - 28px));
   min-height: 180px;
   display: flex;
@@ -625,6 +711,14 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+}
+
+.selection-panel--scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
 }
 
 .selection-empty {
@@ -1026,10 +1120,12 @@ pre {
   gap: 1rem;
   flex-shrink: 0;
   width: 100%;
+  height: var(--live-hud-height);
+  min-height: var(--live-hud-height);
+  max-height: var(--live-hud-height);
   padding: 0.45rem 1rem 0.5rem;
   border-top: 1px solid var(--border);
   background: linear-gradient(180deg, #050810 0%, #070d18 100%);
-  min-height: 52px;
   box-sizing: border-box;
 }
 
@@ -1039,7 +1135,9 @@ pre {
   gap: 1px;
   flex: 1;
   min-width: 0;
-  height: 42px;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
   padding: 0 0.15rem;
 }
 
