@@ -60,7 +60,7 @@ Drop image files under [`docs/screenshots/`](./docs/screenshots/) (PNG or WebP w
 
 The main graph: hosts, service instances, and service-type nodes as they appear on your LAN.
 
-![Live mDNS topology graph](docs/screenshots/live-topology.png)
+![Live mDNS topology graph](docs/screenshots/live-topology.gif)
 
 ### Selection & sidebar
 
