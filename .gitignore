@@ -1,0 +1,25 @@
+/bin/
+/web/node_modules/
+/web/dist/
+
+# Keep the placeholder `internal/webui/assets/index.html` in git, but ignore Vite output
+# copied into the same directory for local single-binary builds.
+/internal/webui/assets/*
+!/internal/webui/assets/index.html
+
+.DS_Store
+Thumbs.db
+*.pcap
+.env
+.env.*
+!.env.example
+
+# Editors / OS noise
+.idea/
+*.swp
+*~
+
+# Go tooling
+*.exe
+coverage.out
+coverage.html

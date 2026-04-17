@@ -1,0 +1,6 @@
+.git
+.github
+bin
+web/node_modules
+web/dist
+internal/webui/assets
